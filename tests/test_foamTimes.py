@@ -1,15 +1,13 @@
-import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+from ofcase import FOAM_TIMES, REPO, run_script, times_on_disk
+
 sys.path.insert(0, str(REPO))
 
 import foamTimes  # noqa: E402
-
-SCRIPT = str(REPO / 'foamTimes.py')
 
 
 def make_case(root, n_procs, times, missing=None):
@@ -38,10 +36,6 @@ def make_collated(root, name, times):
     return loc
 
 
-def times_on_disk(proc):
-    return sorted((p.name for p in proc.iterdir() if foamTimes.is_time_dir(p.name)), key=float)
-
-
 class CliTestCase(unittest.TestCase):
 
     def setUp(self):
@@ -52,10 +46,7 @@ class CliTestCase(unittest.TestCase):
         self._tmp.cleanup()
 
     def run_cli(self, *args):
-        return subprocess.run(
-            [sys.executable, SCRIPT] + list(args) + [str(self.root)],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
-        )
+        return run_script(FOAM_TIMES, *(args + (self.root,)))
 
 
 class SplitKeepLastTest(unittest.TestCase):

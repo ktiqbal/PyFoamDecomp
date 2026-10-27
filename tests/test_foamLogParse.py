@@ -1,15 +1,13 @@
-import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+from ofcase import FOAM_LOG_PARSE, REPO, run_script
+
 sys.path.insert(0, str(REPO))
 
 import foamLogParse  # noqa: E402
-
-SCRIPT = str(REPO / 'foamLogParse.py')
 
 COUPLED_LOG = """\
 Courant Number mean: 0.0001 max: 0.008
@@ -62,10 +60,7 @@ class CoupledResidualsTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def run_cli(self, *args):
-        return subprocess.run(
-            [sys.executable, SCRIPT, str(self.log), '--out', str(self.root / 'out')] + list(args),
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
-        )
+        return run_script(FOAM_LOG_PARSE, self.log, '--out', self.root / 'out', *args)
 
     def test_coupled_fields_discovered(self):
         records, fields = foamLogParse.parse_log(str(self.log))

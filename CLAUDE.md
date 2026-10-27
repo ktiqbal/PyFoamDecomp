@@ -37,11 +37,15 @@ python3 foamLogParse.py LOGFILE [--out DIR] [--prefix STR] [--no-courant|--no-re
 
 ### Tests
 
-Stdlib `unittest`, building throwaway `processorN/<time>/` trees and synthetic logs in temp dirs (`tests/test_foamTimes.py`, `tests/test_foamLogParse.py`):
+Stdlib `unittest`, building throwaway case trees and logs in temp dirs:
 
 ```bash
 python3 -m unittest discover tests
 ```
+
+- `tests/test_foamTimes.py`, `tests/test_foamLogParse.py`: small hand-built trees/logs for specific rules.
+- `tests/ofcase.py`: fixture generator (no tests). Builds case layouts that mirror the real cases in `local_testing/of-test-data/` (undecomposed, classic `processorN/`, collated `processorsN[_a-b]/` with reconstructed root times; empty files with real names) and a synthetic parallel rheoFoam log that returns the records `parse_log` should produce. Also holds the shared `run_script`, `times_on_disk`, `snapshot` helpers. Add new tools' fixtures here.
+- `tests/test_*_synthetic.py`: scenarios on those fixtures at realistic scale. Processor counts are `randint(8, 1024)` from `case_rng(self.id())` (`random.Random('42:<test id>')`), so each test draws the same values whether run alone or in the suite; failure messages print `n_procs` and the seed. Re-run one test with e.g. `python3 -m unittest discover tests -k test_crashed_run_rm`.
 
 ### Manual testing
 
