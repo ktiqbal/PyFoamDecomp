@@ -2,86 +2,80 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Overview
+## Coding guidelines
 
-**PyFoamDecomp** is a growing Python toolbox for working with **decomposed OpenFOAM cases** — cases split across `processor0/`, `processor1/`, … directories by `decomposePar`. The goal is a collection of focused, dependency-free CLI utilities that cover the common pain points of working with decomposed data: inspecting timesteps, managing fields, checking decomposition consistency, parsing logs, and wrapping reconstruction workflows.
+- Don't write comments unless they're absolutely necessary to explain genuinely non-obvious logic (in which case, keep them concise and clear), or a TODO/FIXME with a concrete reason. Don't write comments that just restate what the code does — that's AI slop, and it's a DRY violation: it's now a second place to update when the logic changes.
+- Don't assume existing code is correct or well-structured — call out bad patterns and propose better ones rather than copying them forward.
+- Prefer readable, intuitive code over clever abstractions. No speculative flexibility/configurability that wasn't asked for.
+- When adding a feature or fixing a bug, add tests that actually fail if the behavior regresses — not tests that only exercise structure or pad coverage.
+- Keep commit messages concise: a brief one-line summary, then one paragraph (max) on the additions.
+- Never put a Claude Code session id/link (e.g. a `Claude-Session:` trailer) in a commit message or PR description — strip it if the harness auto-appends one. A `Co-Authored-By: Claude ...` trailer is fine to keep.
 
-The project is in early stages. Current tools are `foamTimes.py` and `foamLogParse.py`. See `roadmap.txt` (untracked) for planned additions.
+## Think before coding
 
-All scripts use Python stdlib only — no pip install needed.
+Don't assume, don't hide confusion, surface tradeoffs. Before implementing:
 
-## Repo layout
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple reasonable interpretations exist, present them — don't pick one silently.
+- If a simpler approach exists than the one implied by the request, say so.
+- If something is unclear, stop and name what's confusing rather than guessing.
 
+## Project overview
+
+PyFoamDecomp is a collection of standalone Python 3 CLI scripts for working with **decomposed OpenFOAM cases** (cases split into `processor*/` directories by `decomposePar`) and their solver logs. It is early-stage: currently `foamTimes.py` (timestep list/delete across processors) and `foamLogParse.py` (log -> plottable `.txt` tables).
+
+Hard constraint: **standard library only** (no numpy, pandas, etc.), Python >= 3.6. Keep new scripts dependency-free.
+
+## Running
+
+There is no build step, packaging, linter config, or test suite. Each tool is a single executable script run directly:
+
+```bash
+python3 foamTimes.py [--all] [--time T] [--rm] [--dry-run] [--with-zero] [-v] [CASE_DIR]
+python3 foamLogParse.py LOGFILE [--out DIR] [--prefix STR] [--no-courant|--no-residuals|--no-continuity|--no-timing] [-v]
 ```
-foamTimes.py      # timestep listing / deletion across processor* dirs
-foamLogParse.py   # log file parser: Courant numbers, residuals, continuity, timing
-roadmap.txt       # untracked personal notes on planned utilities
+
+### Manual testing
+
+`local_testing/` is gitignored and holds local test data. `local_testing/data/log.out` is a real ~2.8 MB OpenFOAM-9 `rheoFoam` parallel log (768 procs) -- use it to exercise `foamLogParse.py`:
+
+```bash
+python3 foamLogParse.py local_testing/data/log.out --out <scratchpad dir> -v
 ```
 
-As new utilities are added, shared helpers (processor-dir discovery, timestep scanning, numeric sorting) should be factored into a common module rather than copied across scripts.
+Pass `--out` so output does not land in `local_testing/data/foamLog_log/`. There is no sample decomposed case; to test `foamTimes.py`, build a throwaway tree of `processorN/<time>/` directories (and always try `--dry-run` before `--rm`).
 
-## Running the scripts
+## Architecture and conventions
+
+Both scripts share the same layout, and new tools should follow it:
+
+1. Module docstring containing usage/examples -- it is reused as the argparse `epilog` (`foamTimes.py` slices it at `'Usage:'`).
+2. Section banners (`# ----` comment blocks): core helpers / parser -> actions / writers -> CLI.
+3. `build_parser()` returns the `ArgumentParser`; `main()` resolves paths, validates, dispatches; `if __name__ == '__main__': main()`.
+4. Errors go to stderr followed by a non-zero exit (`sys.exit(...)`).
 
 ### foamTimes.py
 
-```bash
-python3 foamTimes.py                       # list latest timestep, current dir
-python3 foamTimes.py /path/to/case         # list latest timestep, given case dir
-python3 foamTimes.py --all                 # list all timesteps (union across processors)
-python3 foamTimes.py --rm                  # delete latest timestep
-python3 foamTimes.py --all --rm            # delete ALL timesteps (except 0/)
-python3 foamTimes.py --time 1.5 --rm       # delete a specific timestep
-python3 foamTimes.py --rm --dry-run        # preview deletion without executing
-python3 foamTimes.py --verbose             # show per-processor breakdown
-python3 foamTimes.py --with-zero           # include the 0/ directory in scope
-```
-
-## Running the scripts (continued)
+- Processor dirs matched by `processors?[0-9]+(_[0-9]+-[0-9]+)?` -- covers classic `processorN` and collated `processorsN_start-end`.
+- Timestep dirs matched by a numeric/scientific regex (`is_time_dir`), sorted by `float` value, not lexically.
+- Timesteps are the **union** across all processors, so partially written (crashed) timesteps are still listed and deletable; deletion silently skips processors lacking that time.
+- `0/` is excluded unless `--with-zero`. `--dry-run` alone implies the delete path (prints only).
 
 ### foamLogParse.py
 
-```bash
-python3 foamLogParse.py log.out                    # parse, write to foamLog_log/ next to the log
-python3 foamLogParse.py log.out --out results/     # write to a specific directory
-python3 foamLogParse.py log.out --prefix run1_     # prefix all output files (e.g. run1_courant.txt)
-python3 foamLogParse.py log.out --verbose          # also print a summary table
-python3 foamLogParse.py log.out --no-continuity    # skip continuity.txt
-python3 foamLogParse.py log.out --no-residuals     # skip per-field residual files
-python3 foamLogParse.py log.out --no-timing        # skip timing.txt
-python3 foamLogParse.py log.out --no-courant       # skip courant.txt
-```
+- `parse_log()` is a single-pass streaming state machine over the log. Key ordering facts it relies on:
+  - `Courant Number ...` and `deltaT = ...` lines appear **before** `Time = T`, so they are buffered in `pending_*` and attached when the `Time =` line arrives.
+  - A `Time =` line flushes the previous step's record; the last step is flushed at EOF (makes it safe on a live log).
+  - Lines before the first `Time =` are ignored (the log header's `Time   : hh:mm:ss` uses a colon and does not match `^Time\s*=`).
+- Solver fields are discovered dynamically from `Solving for <field>` lines (no solver-specific assumptions). For fields solved multiple times per step (PISO/PIMPLE correctors): keep the **first** initial residual, the **last** final residual, and **sum** iterations.
+- `RE_COURANT` uses `.search` (so `Interface Courant Number` matches); the other regexes use `.match` anchored at line start.
+- Output: `#`-commented header, values formatted `{:.10e}` joined by two spaces, missing values as `NaN` -- intended for `np.loadtxt(..., comments='#')`. Keep this format stable when adding outputs.
+- Logs are opened with `errors='replace'` to tolerate garbled interleaved MPI output.
 
-Output files (whitespace-separated, `#`-commented headers for numpy/pandas/gnuplot):
+Style note: `foamTimes.py` uses `str.format`, `foamLogParse.py` uses f-strings; match the file you are editing.
 
-| File | Columns |
-|---|---|
-| `courant.txt` | `Time  deltaT  Co_mean  Co_max` |
-| `continuity.txt` | `Time  cont_sum_local  cont_global  cont_cumulative` |
-| `timing.txt` | `Time  ExecutionTime  ClockTime` |
-| `residuals_<field>.txt` | `Time  InitResid  FinalResid  nIter` |
+## Direction
 
-Fields are discovered dynamically from the log. When a field is solved multiple times per step (e.g. pressure in PISO/PIMPLE corrector loops), the **first initial residual** and **last final residual** are recorded and iteration counts are summed.
+`roadmap.txt` (gitignored, personal notes) lists planned tools: `foamFields`, `foamClean`, `foamPostProc` (postProcessing/ functionObject output with restart stitching), `foamFieldStats`, `foamReconstructHelper`, `foamCheckDecomp`, `foamDiskUsage`, `foamBoundaryInfo`, and others. Planned infrastructure: once more scripts exist, factor duplicated helpers (processor-dir discovery, timestep scanning, numeric sort key) into a shared `pyfoamdecomp/` package and add `pyproject.toml` console entry points. Until then, scripts are self-contained and duplicate helpers rather than importing each other. New `--rm`-style destructive features should offer `--dry-run`, consistent with `foamTimes.py`.
 
-## Architecture
-
-### foamTimes.py
-
-- **Core helpers** — `is_time_dir`, `time_sort_key`, `find_processor_dirs`, `get_times_union`, `get_latest_time`: filesystem scanning and numeric sorting of OpenFOAM timestep directories.
-- **Actions** — `list_times`, `delete_times`: operate on the resolved list of timesteps; `delete_times` silently skips processors missing a given timestep (safe for partial writes).
-- **CLI** — `build_parser` / `main`: argparse wiring that translates `--all`, `--time`, `--rm`, `--dry-run`, `--verbose`, `--with-zero` into calls to the action functions.
-
-### foamLogParse.py
-
-- **Single-pass streaming parser** — reads line-by-line; handles logs larger than memory.
-- **State machine** — `pending_co_mean/co_max/delta_t` are buffered when the Courant/deltaT lines appear, then committed when the `Time = T` line arrives (OpenFOAM prints them in that order).
-- **Multi-corrector awareness** — for fields solved N times per step (PISO pressure correctors, PIMPLE outer iterations), tracks first `init` residual, last `final` residual, and summed `nIter`.
-- **Tolerant of mid-run logs** — the last in-progress step is flushed after EOF.
-- **Dynamic field discovery** — no hard-coded field list; works with any solver (rheoFoam, interFoam, simpleFoam, …).
-- **`errors='replace'` file open** — survives garbled output in parallel logs.
-
-### Design principles (apply to all future tools)
-
-- **Union semantics for timestep discovery** — a timestep is considered present if *any* processor wrote it. Protects against partial writes mid-simulation.
-- **Silent skip on missing dirs** — if a processor is missing an expected timestep, skip it without error (partial write tolerance).
-- **Processor directory regex**: `processors?[0-9]+(_[0-9]+-[0-9]+)?` — covers both `processorN` (classic) and `processorsN_start-end` (newer collated I/O) layouts.
-- **No third-party dependencies** — stdlib only.
+When adding or changing a tool, update its section in `README.md` (usage block, options, examples).
