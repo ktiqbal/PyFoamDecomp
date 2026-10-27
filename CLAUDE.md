@@ -37,7 +37,7 @@ python3 foamLogParse.py LOGFILE [--out DIR] [--prefix STR] [--no-courant|--no-re
 
 ### Tests
 
-Stdlib `unittest`, building throwaway `processorN/<time>/` trees in temp dirs:
+Stdlib `unittest`, building throwaway `processorN/<time>/` trees and synthetic logs in temp dirs (`tests/test_foamTimes.py`, `tests/test_foamLogParse.py`):
 
 ```bash
 python3 -m unittest discover tests
@@ -78,7 +78,7 @@ Both scripts share the same layout, and new tools should follow it:
   - `Courant Number ...` and `deltaT = ...` lines appear **before** `Time = T`, so they are buffered in `pending_*` and attached when the `Time =` line arrives.
   - A `Time =` line flushes the previous step's record; the last step is flushed at EOF (makes it safe on a live log).
   - Lines before the first `Time =` are ignored (the log header's `Time   : hh:mm:ss` uses a colon and does not match `^Time\s*=`).
-- Solver fields are discovered dynamically from `Solving for <field>` lines (no solver-specific assumptions). For fields solved multiple times per step (PISO/PIMPLE correctors): keep the **first** initial residual, the **last** final residual, and **sum** iterations.
+- Solver fields are discovered dynamically from `Solving for <field>` and `Solving coupled for <field>` (rheoTool coupled p-U) lines (no solver-specific assumptions); coupled and segregated solves share the same per-field record. For fields solved multiple times per step (PISO/PIMPLE correctors): keep the **first** initial residual, the **last** final residual, and **sum** iterations.
 - `RE_COURANT` uses `.search` (so `Interface Courant Number` matches); the other regexes use `.match` anchored at line start.
 - Output: `#`-commented header, values formatted `{:.10e}` joined by two spaces, missing values as `NaN` -- intended for `np.loadtxt(..., comments='#')`. Keep this format stable when adding outputs.
 - Logs are opened with `errors='replace'` to tolerate garbled interleaved MPI output.

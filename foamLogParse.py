@@ -48,8 +48,9 @@ RE_TIME = re.compile(r'^Time\s*=\s*(\S+)')
 
 # "DILUPBiCG:  Solving for Ux, Initial residual = 6.95e-07, Final residual = 8.42e-09, No Iterations 7"
 # "smoothSolver:  Solving for ...", "GAMG:  Solving for ..."
+# "Petsc:preonly:lu: Solving coupled for p, Initial residual = ..."  (rheoTool coupled solver)
 RE_SOLVER = re.compile(
-    r'^\S+:\s+Solving for (\S+),\s+'
+    r'^\S+:\s+Solving (?:coupled )?for (\S+),\s+'
     r'Initial residual\s*=\s*(\S+),\s+'
     r'Final residual\s*=\s*(\S+),\s+'
     r'No Iterations\s+(\d+)'
@@ -323,19 +324,19 @@ def print_summary(records, fields_order):
     print('\n--- Parse summary ---')
     print(f'  Time steps:    {len(records)}')
     if times:
-        print(f'  Time range:    {min(times):.6g}  →  {max(times):.6g}')
+        print(f'  Time range:    {min(times):.6g}  ->  {max(times):.6g}')
 
     lo, hi = _minmax([r['co_max'] for r in records])
     if lo is not None:
-        print(f'  Co max:        {lo:.4g}  →  {hi:.4g}')
+        print(f'  Co max:        {lo:.4g}  ->  {hi:.4g}')
 
     lo, hi = _minmax([r['co_mean'] for r in records])
     if lo is not None:
-        print(f'  Co mean:       {lo:.4g}  →  {hi:.4g}')
+        print(f'  Co mean:       {lo:.4g}  ->  {hi:.4g}')
 
     lo, hi = _minmax([r['delta_t'] for r in records])
     if lo is not None:
-        print(f'  deltaT:        {lo:.4g}  →  {hi:.4g}')
+        print(f'  deltaT:        {lo:.4g}  ->  {hi:.4g}')
 
     if fields_order:
         print(f'\n  {"Field":<14}  {"InitResid min":>14}  {"InitResid max":>14}')

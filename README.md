@@ -131,6 +131,7 @@ python3 foamLogParse.py log.out --no-continuity --no-timing
 #### Notes
 
 - **Multi-corrector fields** (e.g. pressure in PISO/PIMPLE loops, solved multiple times per step): records the *first* initial residual, the *last* final residual, and the *total* iteration count across all corrector steps.
+- **Coupled solvers** (e.g. rheoTool's `Petsc:preonly:lu: Solving coupled for p, ...`) are parsed like segregated ones, into the same `residuals_<field>.txt` files.
 - **Safe to run on a live log** — the last in-progress time step is flushed at EOF, so you can parse while the simulation is still running.
 - **Parallel logs** — opened with `errors='replace'` to survive garbled output from MPI ranks writing concurrently.
 
