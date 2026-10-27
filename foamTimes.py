@@ -59,18 +59,24 @@ def time_sort_key(name):
         return 0.0
 
 
+def processor_dir_key(path):
+    """Numeric sort key, so processor2 sorts before processor10 and processors4_2-3 after _0-1."""
+    _, n, ranks = re.fullmatch(PROCESSOR_DIR_RE, path.name).groups()
+    return int(n), int(ranks[1:].split('-')[0]) if ranks else -1
+
+
 def find_processor_families(case_dir):
     """
     Group processor dirs by layout: classic processorN dirs form one family,
     collated processorsN and processorsN_a-b dirs form one family per N.
     """
     families = {}
-    for p in sorted(case_dir.iterdir()):
+    for p in case_dir.iterdir():
         m = re.fullmatch(PROCESSOR_DIR_RE, p.name)
         if m and p.is_dir():
             key = 'processor' if m.group(1) == 'processor' else 'processors' + m.group(2)
             families.setdefault(key, []).append(p)
-    return families
+    return {k: sorted(dirs, key=processor_dir_key) for k, dirs in families.items()}
 
 
 def side_label(side):
@@ -188,14 +194,15 @@ def presence_status(t, sides):
     cells, missing = [], []
     for side in sides:
         label = side_label(side)
-        present = [loc for loc in side if (loc / t).is_dir()]
+        absent = [loc.name for loc in side if not (loc / t).is_dir()]
+        n_present = len(side) - len(absent)
         if len(side) == 1:
-            cell, width = (label if present else ''), len(label)
+            cell, width = (label if n_present else ''), len(label)
         else:
-            cell = '{}/{} {}'.format(len(present), len(side), label) if present else ''
+            cell = '{}/{} {}'.format(n_present, len(side), label) if n_present else ''
             width = len('{0}/{0} {1}'.format(len(side), label))
-            if present:
-                missing += [loc.name for loc in side if loc not in present]
+            if n_present:
+                missing += absent
         cells.append(cell.ljust(width))
     status = '  ' + '  '.join(cells)
     if missing:

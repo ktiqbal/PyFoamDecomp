@@ -142,6 +142,23 @@ class KeepLastCliTest(CliTestCase):
         self.assertEqual(times_on_disk(self.root / 'processor0'), ['1', '2'])
 
 
+class ProcessorOrderTest(CliTestCase):
+
+    def test_missing_processors_listed_in_numeric_order(self):
+        make_case(self.root, 12, ['1', '2'], missing={'2': [10, 2]})
+        result = self.run_cli('--all', '-v')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[-1],
+                         '2  10/12 processor*  [MISSING: processor2, processor10]')
+
+    def test_io_rank_dirs_sorted_by_first_rank(self):
+        for name in ('processors12_10-11', 'processors12_0-1', 'processors12_2-9'):
+            make_collated(self.root, name, ['1'])
+        families = foamTimes.find_processor_families(self.root)
+        self.assertEqual([p.name for p in families['processors12']],
+                         ['processors12_0-1', 'processors12_2-9', 'processors12_10-11'])
+
+
 class RootCliTest(CliTestCase):
 
     def test_undecomposed_lists_root_times(self):
