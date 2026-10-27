@@ -2,6 +2,7 @@
 roadmap.txt
 
 # Local testing directory — not tracked
+dev-notes/
 local_testing/
 
 # Python bytecode
