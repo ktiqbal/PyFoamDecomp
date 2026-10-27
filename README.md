@@ -12,11 +12,14 @@ No third-party dependencies — everything runs on the Python 3 standard library
 
 ### `foamTimes.py` — timestep management
 
-List, inspect, and delete timesteps across all `processor*` directories, or in the case root for undecomposed cases.
+List, inspect, and delete timesteps in the two "sides" of a case:
 
-Timestep discovery uses the **union** across processors, so a timestep is considered present if *any* processor wrote it. This makes the tool safe to run even after a partial write (e.g. a crashed simulation).
+- **root** -- time directories in the case root (an undecomposed case, or the output of `reconstructPar`)
+- **decomposed** -- classic `processorN/` dirs, or collated `processorsN/` dirs (`fileHandler collated`)
 
-If the case has no `processor*` directories, the time directories in the case root are used instead. In a decomposed case, root time directories (e.g. from `reconstructPar`) are ignored unless you pass `--root`; root and processor timesteps are never mixed in one run.
+Decomposed timestep discovery uses the **union** across processors, so a timestep is considered present if *any* processor wrote it. This makes the tool safe to run even after a partial write (e.g. a crashed simulation).
+
+Listing shows every side that has timesteps. Deleting (`--rm` / `--dry-run`) from a case where **both** sides have timesteps (e.g. after `reconstructPar`) is an error unless you pick a side with `--root`, `--decomposed`, or both flags to delete from both. If the processor dirs exist but hold no timesteps, deletion never falls back to the case root on its own: pass `--root`. A case root holding only `0/` does not count as having timesteps (unless `--with-zero`).
 
 ```
 Usage: foamTimes.py [OPTIONS] [CASE_DIR]
@@ -29,11 +32,13 @@ Options:
   --time TIME, -t   Act on a specific timestep value, matched numerically
                     (e.g. --time 8.0 finds 8/; error if no match)
   --keep-last N     Act on all timesteps except the N newest complete ones
-  --root            Use time directories in the case root even if processor* dirs exist
+  --root            Use the time directories in the case root
+  --decomposed      Use the time directories in the processor dirs
+                    (both flags together: use both sides)
   --rm              Delete the selected timestep(s)
   --dry-run, -n     Preview what would be deleted without actually deleting
   --with-zero       Include the 0/ directory in scope
-  --verbose, -v     Show per-processor breakdown for each timestep
+  --verbose, -v     Show which side/processors have each timestep
 ```
 
 #### Examples
@@ -56,19 +61,32 @@ python3 foamTimes.py --keep-last 3         # show which timesteps would be kept/
 python3 foamTimes.py --keep-last 3 -n      # preview the deletion
 python3 foamTimes.py --keep-last 3 --rm    # keep only the 3 newest complete timesteps
 
-# --- Case root ---
+# --- Case root / reconstructed cases ---
 python3 foamTimes.py --all /path/to/undecomposed/case   # root times used automatically
-python3 foamTimes.py --root --keep-last 2 --rm          # prune reconstructed times in a decomposed case
+python3 foamTimes.py --all -v                           # which times are reconstructed / decomposed
+python3 foamTimes.py --decomposed --keep-last 2 --rm    # after reconstructPar: prune processor dirs
+python3 foamTimes.py --root --keep-last 2 --rm          # prune reconstructed times only
+python3 foamTimes.py --root --decomposed --time 8 --rm  # delete 8 from both sides
 ```
 
-`--keep-last N` counts only **complete** timesteps (present on every processor), so a partially written timestep from a crash never takes one of the N slots. Partial timesteps newer than the oldest kept one are also kept (and flagged `(partial)` in the listing); everything older is deleted. If there are N or fewer complete timesteps, nothing is deleted. `--all`, `--time` and `--keep-last` are mutually exclusive.
+With `-v`, each time gets one column per side (blank where it is absent), e.g. after `reconstructPar` with only some times reconstructed:
+
+```
+2   root  processors4
+16        processors4
+```
+
+Latest, `--time` and `--keep-last` work on the union of the selected sides only. `--keep-last N` counts only **complete** timesteps (in the case root, or present on every processor), so a partially written timestep from a crash never takes one of the N slots. Partial timesteps newer than the oldest kept one are also kept (and flagged `(partial)` in the listing); everything older is deleted. If there are N or fewer complete timesteps, nothing is deleted. `--all`, `--time` and `--keep-last` are mutually exclusive.
 
 #### Supported processor directory layouts
 
 | Pattern | Example | Source |
 |---|---|---|
 | `processorN` | `processor0` | Classic OpenFOAM |
-| `processorsN_start-end` | `processors4_0-3` | Newer OpenFOAM collated I/O |
+| `processorsN` | `processors4` | Collated I/O (`fileHandler collated`), all ranks in one dir |
+| `processorsN_start-end` | `processors4_0-1`, `processors4_2-3` | Collated I/O with several I/O ranks |
+
+Processor dirs without any time directories are ignored (e.g. the empty `processor0/` often created alongside collated output). If more than one layout contains timesteps (classic and collated, or collated with different N), the tool stops with an error rather than mixing them. The bare `processors/` dir of older OpenFOAM versions is not supported. With a single collated `processorsN/` dir, partial writes cannot be detected from directory presence, so every timestep there counts as complete.
 
 ---
 

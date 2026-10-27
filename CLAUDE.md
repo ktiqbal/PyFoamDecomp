@@ -22,7 +22,7 @@ Don't assume, don't hide confusion, surface tradeoffs. Before implementing:
 
 ## Project overview
 
-PyFoamDecomp is a collection of standalone Python 3 CLI scripts for working with **decomposed OpenFOAM cases** (cases split into `processor*/` directories by `decomposePar`) and their solver logs. It is early-stage: currently `foamTimes.py` (timestep list/delete across processors, or the case root) and `foamLogParse.py` (log -> plottable `.txt` tables).
+PyFoamDecomp is a collection of standalone Python 3 CLI scripts for working with **decomposed OpenFOAM cases** (cases split into `processor*/` directories by `decomposePar`) and their solver logs. It is early-stage: currently `foamTimes.py` (timestep list/delete in the case root and/or processor dirs, classic or collated) and `foamLogParse.py` (log -> plottable `.txt` tables).
 
 Hard constraint: **standard library only** (no numpy, pandas, etc.), Python >= 3.6. Keep new scripts dependency-free.
 
@@ -31,7 +31,7 @@ Hard constraint: **standard library only** (no numpy, pandas, etc.), Python >= 3
 There is no build step, packaging, or linter config. Each tool is a single executable script run directly:
 
 ```bash
-python3 foamTimes.py [--all|--time T|--keep-last N] [--root] [--rm] [--dry-run] [--with-zero] [-v] [CASE_DIR]
+python3 foamTimes.py [--all|--time T|--keep-last N] [--root] [--decomposed] [--rm] [--dry-run] [--with-zero] [-v] [CASE_DIR]
 python3 foamLogParse.py LOGFILE [--out DIR] [--prefix STR] [--no-courant|--no-residuals|--no-continuity|--no-timing] [-v]
 ```
 
@@ -51,7 +51,7 @@ python3 -m unittest discover tests
 python3 foamLogParse.py local_testing/data/log.out --out <scratchpad dir> -v
 ```
 
-Pass `--out` so output does not land in `local_testing/data/foamLog_log/`. `local_testing/of-test-data/` has small real rheoTool cases: `01-unDecomposed` (root time dirs), `02-decomposed` (4 `processorN/` dirs), `03-decomposed_collated_fh` (collated file handler, not yet supported). Run `foamTimes.py` against scratchpad copies of them, never the originals, and always try `--dry-run` before `--rm`.
+Pass `--out` so output does not land in `local_testing/data/foamLog_log/`. `local_testing/of-test-data/` has small real rheoTool cases: `01-unDecomposed` (root time dirs), `02-decomposed` (4 `processorN/` dirs), `03-decomposed_collated_fh` (collated `processors4/`, an empty `processor0/`, and reconstructed root times). Run `foamTimes.py` against scratchpad copies of them, never the originals, and always try `--dry-run` before `--rm`.
 
 ## Architecture and conventions
 
@@ -64,13 +64,14 @@ Both scripts share the same layout, and new tools should follow it:
 
 ### foamTimes.py
 
-- Every helper takes `locations`: the dirs holding time dirs. That is the processor dirs, or `[case_dir]` if there are none or `--root` is given (`find_locations`); root and processor times are never mixed. Root mode is just a one-element list, so selection/deletion logic is shared.
-- Processor dirs matched by `processors?[0-9]+(_[0-9]+-[0-9]+)?` -- covers classic `processorN` and collated `processorsN_start-end`.
+- Every helper takes `sides`: a list of "sides", each a list of dirs holding time dirs -- `[case_dir]` (root) or the processor dirs of one family. `resolve_sides` picks them from `--root`/`--decomposed`: with neither, listing uses every side with times, while deleting errors if both sides have times, and never falls back to the root when processor dirs exist (pass `--root`). A root with only `0/` has no times unless `--with-zero`.
+- Processor dirs are grouped into families (`find_processor_families`): classic `processorN` is one, collated `processorsN`/`processorsN_a-b` is one per N. Families without time dirs are ignored (collated runs often have an empty `processor0/`); more than one family with times is an error.
+- Processor dirs matched by `PROCESSOR_DIR_RE`; bare `processors/` (old OF versions) is not supported.
 - Timestep dirs matched by a numeric/scientific regex (`is_time_dir`), sorted by `float` value, not lexically.
-- Timesteps are the **union** across all processors, so partially written (crashed) timesteps are still listed and deletable; deletion silently skips processors lacking that time.
-- `--time` matches by numeric value (`find_time_by_value`) and acts on the real dir name; no match is an error.
+- Timesteps are the **union** across all locations of the selected sides, so partially written (crashed) timesteps are still listed and deletable; deletion silently skips processors lacking that time.
+- `--time` matches by numeric value (`find_time_by_value`) and acts on the real dir name in every selected side; no match is an error.
 - `0/` is excluded unless `--with-zero`. `--dry-run` alone implies the delete path (prints only).
-- `--keep-last N` counts only complete timesteps (on every processor) toward N; partial timesteps newer than the oldest kept one are kept too, and nothing is deleted with N or fewer complete timesteps (`split_keep_last`).
+- `--keep-last N` counts only complete timesteps (`is_complete`: in every location of some selected side) toward N; partial timesteps newer than the oldest kept one are kept too, and nothing is deleted with N or fewer complete timesteps (`split_keep_last`).
 
 ### foamLogParse.py
 

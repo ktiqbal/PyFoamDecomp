@@ -31,6 +31,13 @@ def make_root_case(root, times):
         (root / name).mkdir()
 
 
+def make_collated(root, name, times):
+    loc = root / name
+    for sub in ['constant'] + list(times):
+        (loc / sub).mkdir(parents=True)
+    return loc
+
+
 def times_on_disk(proc):
     return sorted((p.name for p in proc.iterdir() if foamTimes.is_time_dir(p.name)), key=float)
 
@@ -61,8 +68,8 @@ class SplitKeepLastTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def split(self, procs, n):
-        times = foamTimes.get_times_union(procs)
-        return foamTimes.split_keep_last(times, procs, n)
+        times = foamTimes.get_times_union([procs])
+        return foamTimes.split_keep_last(times, [procs], n)
 
     def test_keeps_newest_n(self):
         procs = make_case(self.root, 2, ['1', '2', '3', '4'])
@@ -158,13 +165,15 @@ class RootCliTest(CliTestCase):
         self.assertEqual(result.stdout.split(), ['1', '2'])
         self.assertIn('case root', result.stderr)
 
-    def test_decomposed_ignores_root_times_by_default(self):
+    def test_decomposed_rm_without_side_is_an_error(self):
         procs = make_case(self.root, 2, ['1', '2'])
         make_root_case(self.root, ['0', '2', '4'])
-        result = self.run_cli('--all', '--rm')
-        self.assertEqual(result.returncode, 0, result.stderr)
+        for args in (['--all', '--rm'], ['--rm'], ['--keep-last', '1', '-n']):
+            result = self.run_cli(*args)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('--root, --decomposed, or both', result.stderr)
         for proc in procs:
-            self.assertEqual(times_on_disk(proc), [])
+            self.assertEqual(times_on_disk(proc), ['1', '2'])
         self.assertEqual(times_on_disk(self.root), ['0', '2', '4'])
 
     def test_root_flag_acts_only_on_root_times(self):
@@ -195,6 +204,123 @@ class TimeByValueCliTest(CliTestCase):
         self.assertIn("No timestep matching '8.5'", result.stderr)
         for proc in procs:
             self.assertEqual(times_on_disk(proc), ['8', '10'])
+
+
+class CollatedCliTest(CliTestCase):
+
+    def test_empty_processor0_is_ignored(self):
+        (self.root / 'processor0').mkdir()
+        coll = make_collated(self.root, 'processors4', ['0', '2', '4', '6'])
+        result = self.run_cli('--keep-last', '2', '--rm')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(times_on_disk(coll), ['0', '4', '6'])
+        self.assertTrue((coll / 'constant').is_dir())
+
+    def test_io_rank_split_dirs_form_one_side(self):
+        a = make_collated(self.root, 'processors4_0-1', ['1', '2', '3'])
+        b = make_collated(self.root, 'processors4_2-3', ['1', '2'])
+        result = self.run_cli('--keep-last', '1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([line.split() for line in result.stdout.splitlines()],
+                         [['1', 'delete'], ['2', 'keep'], ['3', 'keep', '(partial)']])
+        result = self.run_cli('--all', '-v')
+        self.assertIn('1/2 processors4_*  [MISSING: processors4_2-3]', result.stdout)
+        self.assertEqual(times_on_disk(a), ['1', '2', '3'])
+        self.assertEqual(times_on_disk(b), ['1', '2'])
+
+    def test_several_layouts_with_times_is_an_error(self):
+        procs = make_case(self.root, 2, ['1', '2'])
+        coll = make_collated(self.root, 'processors2', ['1', '2'])
+        result = self.run_cli('--all', '--rm')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('processor*, processors2', result.stderr)
+        self.assertEqual(times_on_disk(procs[0]), ['1', '2'])
+        self.assertEqual(times_on_disk(coll), ['1', '2'])
+        self.assertEqual(self.run_cli('--root', '--all').returncode, 0)
+
+
+class SidesCliTest(CliTestCase):
+
+    def setUp(self):
+        super().setUp()
+        (self.root / 'processor0').mkdir()
+        self.coll = make_collated(self.root, 'processors4', ['0', '2', '4', '6', '8'])
+        make_root_case(self.root, ['0', '2', '4', '6'])
+
+    def test_listing_is_union_of_both_sides(self):
+        result = self.run_cli('--all')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.split(), ['2', '4', '6', '8'])
+
+    def test_verbose_shows_a_column_per_side(self):
+        result = self.run_cli('--all', '-v')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[0], '2  root  processors4')
+        self.assertEqual(lines[-1], '8        processors4')
+        self.assertIn('root, processors4', result.stderr)
+
+    def test_rm_without_side_leaves_tree_untouched(self):
+        result = self.run_cli('--all', '--rm')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('--root, --decomposed, or both', result.stderr)
+        self.assertEqual(times_on_disk(self.coll), ['0', '2', '4', '6', '8'])
+        self.assertEqual(times_on_disk(self.root), ['0', '2', '4', '6'])
+
+    def test_decomposed_rm_only_touches_processor_dirs(self):
+        result = self.run_cli('--decomposed', '--keep-last', '2', '--rm')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(times_on_disk(self.coll), ['0', '6', '8'])
+        self.assertEqual(times_on_disk(self.root), ['0', '2', '4', '6'])
+
+    def test_root_rm_only_touches_case_root(self):
+        result = self.run_cli('--root', '--all', '--rm')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(times_on_disk(self.root), ['0'])
+        self.assertEqual(times_on_disk(self.coll), ['0', '2', '4', '6', '8'])
+
+    def test_both_flags_delete_from_both_sides(self):
+        result = self.run_cli('--root', '--decomposed', '--time', '4', '--rm')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(times_on_disk(self.root), ['0', '2', '6'])
+        self.assertEqual(times_on_disk(self.coll), ['0', '2', '6', '8'])
+
+    def test_root_only_time_counts_as_complete(self):
+        (self.coll / '6').rmdir()
+        sides = [[self.root], [self.coll]]
+        times = foamTimes.get_times_union(sides)
+        self.assertEqual(foamTimes.split_keep_last(times, sides, 2), (['6', '8'], ['2', '4']))
+
+    def test_decomposed_on_undecomposed_case_is_an_error(self):
+        self._tmp.cleanup()
+        self.root.mkdir()
+        make_root_case(self.root, ['1', '2'])
+        result = self.run_cli('--decomposed', '--all')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('No processor* directories with timesteps', result.stderr)
+
+
+class SideAmbiguityCliTest(CliTestCase):
+
+    def test_root_initial_conditions_alone_do_not_make_rm_ambiguous(self):
+        procs = make_case(self.root, 2, ['0', '1', '2'])
+        make_root_case(self.root, ['0'])
+        result = self.run_cli('--all', '--rm')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(times_on_disk(procs[0]), ['0'])
+        result = self.run_cli('--all', '--rm', '--with-zero')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(times_on_disk(self.root), ['0'])
+
+    def test_empty_processor_dirs_never_fall_back_to_root(self):
+        make_collated(self.root, 'processors4', [])
+        make_root_case(self.root, ['0', '1', '2'])
+        result = self.run_cli('--all', '--rm')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('pass --root', result.stderr)
+        self.assertEqual(times_on_disk(self.root), ['0', '1', '2'])
+        result = self.run_cli('--all')
+        self.assertEqual(result.stdout.split(), ['1', '2'])
 
 
 if __name__ == '__main__':
