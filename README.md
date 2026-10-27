@@ -25,6 +25,7 @@ Arguments:
 Options:
   --all             Act on ALL timesteps instead of just the latest
   --time TIME, -t   Act on a specific timestep value (e.g. --time 1.5)
+  --keep-last N     Act on all timesteps except the N newest complete ones
   --rm              Delete the selected timestep(s)
   --dry-run, -n     Preview what would be deleted without actually deleting
   --with-zero       Include the 0/ directory in scope
@@ -45,7 +46,14 @@ python3 foamTimes.py --rm                  # delete latest timestep
 python3 foamTimes.py --all --rm            # delete ALL timesteps (except 0/)
 python3 foamTimes.py --time 1.5 --rm       # delete a specific timestep
 python3 foamTimes.py --rm --dry-run        # preview deletion without executing
+
+# --- Pruning ---
+python3 foamTimes.py --keep-last 3         # show which timesteps would be kept/deleted
+python3 foamTimes.py --keep-last 3 -n      # preview the deletion
+python3 foamTimes.py --keep-last 3 --rm    # keep only the 3 newest complete timesteps
 ```
+
+`--keep-last N` counts only **complete** timesteps (present on every processor), so a partially written timestep from a crash never takes one of the N slots. Partial timesteps newer than the oldest kept one are also kept (and flagged `(partial)` in the listing); everything older is deleted. If there are N or fewer complete timesteps, nothing is deleted. `--all`, `--time` and `--keep-last` are mutually exclusive.
 
 #### Supported processor directory layouts
 

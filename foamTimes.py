@@ -17,6 +17,8 @@ Examples:
     foamTimes.py --all --rm             # delete ALL times (except 0)
     foamTimes.py --time 1.5 --rm        # delete a specific time
     foamTimes.py --rm --dry-run         # preview deletion without executing
+    foamTimes.py --keep-last 3          # show which times would be kept/deleted
+    foamTimes.py --keep-last 3 --rm     # keep only the 3 newest complete times
     foamTimes.py --verbose              # show per-processor breakdown
 """
 
@@ -78,23 +80,58 @@ def get_latest_time(proc_dirs, include_zero=False):
     return times[-1] if times else None
 
 
+def is_complete(t, proc_dirs):
+    return all((p / t).is_dir() for p in proc_dirs)
+
+
+def split_keep_last(times, proc_dirs, n):
+    """
+    Split sorted times into (keep, delete) so that the newest n COMPLETE
+    timesteps (present on every processor) are kept. Partial timesteps newer
+    than the oldest kept one are also kept; nothing is deleted if there are
+    n or fewer complete timesteps.
+    """
+    complete = [t for t in times if is_complete(t, proc_dirs)]
+    if len(complete) <= n:
+        return list(times), []
+    cutoff = time_sort_key(complete[-n])
+    keep = [t for t in times if time_sort_key(t) >= cutoff]
+    delete = [t for t in times if time_sort_key(t) < cutoff]
+    return keep, delete
+
+
 # ---------------------------------------------------------------------------
 # Actions
 # ---------------------------------------------------------------------------
 
+def presence_status(t, proc_dirs):
+    present = [p.name for p in proc_dirs if (p / t).is_dir()]
+    missing = [p.name for p in proc_dirs if not (p / t).is_dir()]
+    status = "  present in {}/{} processors".format(len(present), len(proc_dirs))
+    if missing:
+        truncated = missing[:5]
+        suffix = '...' if len(missing) > 5 else ''
+        status += "  [MISSING: {}{}]".format(', '.join(truncated), suffix)
+    return status
+
+
 def list_times(times, proc_dirs, verbose):
     for t in times:
         if verbose:
-            present = [p.name for p in proc_dirs if (p / t).is_dir()]
-            missing = [p.name for p in proc_dirs if not (p / t).is_dir()]
-            status = "  present in {}/{} processors".format(len(present), len(proc_dirs))
-            if missing:
-                truncated = missing[:5]
-                suffix = '...' if len(missing) > 5 else ''
-                status += "  [MISSING: {}{}]".format(', '.join(truncated), suffix)
-            print("{}{}".format(t, status))
+            print("{}{}".format(t, presence_status(t, proc_dirs)))
         else:
             print(t)
+
+
+def list_keep_last(keep, delete, proc_dirs, verbose):
+    width = max(len(t) for t in keep + delete)
+    for t in sorted(keep + delete, key=time_sort_key):
+        line = "{}  {:<6}".format(t.ljust(width), 'keep' if t in keep else 'delete')
+        if verbose:
+            line += presence_status(t, proc_dirs)
+        elif t in keep and not is_complete(t, proc_dirs):
+            line += "  (partial)"
+        print(line)
 
 
 def delete_times(times, proc_dirs, dry_run, verbose):
@@ -122,6 +159,16 @@ def delete_times(times, proc_dirs, dry_run, verbose):
 # CLI
 # ---------------------------------------------------------------------------
 
+def positive_int(value):
+    try:
+        n = int(value)
+    except ValueError:
+        n = 0
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer, got '{}'".format(value))
+    return n
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog='foamTimes',
@@ -139,15 +186,25 @@ def build_parser():
         metavar='CASE_DIR',
         help='Path to the OpenFOAM case directory (default: current directory)',
     )
-    parser.add_argument(
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument(
         '--all',
         action='store_true',
         help='Act on ALL timesteps instead of just the latest',
     )
-    parser.add_argument(
+    selection.add_argument(
         '--time', '-t',
         metavar='TIME',
         help='Act on a specific timestep value (e.g. --time 1.5)',
+    )
+    selection.add_argument(
+        '--keep-last',
+        type=positive_int,
+        metavar='N',
+        help=(
+            'Act on all timesteps except the N newest complete ones '
+            '(present on every processor); newer partial timesteps are also kept'
+        ),
     )
     parser.add_argument(
         '--rm',
@@ -182,6 +239,20 @@ def main():
         sys.exit(1)
 
     proc_dirs = find_processor_dirs(case_dir)
+
+    if args.keep_last:
+        times = get_times_union(proc_dirs, include_zero=args.with_zero)
+        if not times:
+            print("No timesteps found.")
+            sys.exit(0)
+        keep, delete = split_keep_last(times, proc_dirs, args.keep_last)
+        if args.rm or args.dry_run:
+            delete_times(delete, proc_dirs, dry_run=args.dry_run, verbose=args.verbose)
+            label = "[dry-run] Would keep" if args.dry_run else "Kept time(s)"
+            print("{}: {}".format(label, ', '.join(keep)))
+        else:
+            list_keep_last(keep, delete, proc_dirs, verbose=args.verbose)
+        return
 
     # --- Determine which times to act on ---
     if args.time:

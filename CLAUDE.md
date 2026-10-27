@@ -28,11 +28,19 @@ Hard constraint: **standard library only** (no numpy, pandas, etc.), Python >= 3
 
 ## Running
 
-There is no build step, packaging, linter config, or test suite. Each tool is a single executable script run directly:
+There is no build step, packaging, or linter config. Each tool is a single executable script run directly:
 
 ```bash
-python3 foamTimes.py [--all] [--time T] [--rm] [--dry-run] [--with-zero] [-v] [CASE_DIR]
+python3 foamTimes.py [--all|--time T|--keep-last N] [--rm] [--dry-run] [--with-zero] [-v] [CASE_DIR]
 python3 foamLogParse.py LOGFILE [--out DIR] [--prefix STR] [--no-courant|--no-residuals|--no-continuity|--no-timing] [-v]
+```
+
+### Tests
+
+Stdlib `unittest`, building throwaway `processorN/<time>/` trees in temp dirs:
+
+```bash
+python3 -m unittest discover tests
 ```
 
 ### Manual testing
@@ -60,6 +68,7 @@ Both scripts share the same layout, and new tools should follow it:
 - Timestep dirs matched by a numeric/scientific regex (`is_time_dir`), sorted by `float` value, not lexically.
 - Timesteps are the **union** across all processors, so partially written (crashed) timesteps are still listed and deletable; deletion silently skips processors lacking that time.
 - `0/` is excluded unless `--with-zero`. `--dry-run` alone implies the delete path (prints only).
+- `--keep-last N` counts only complete timesteps (on every processor) toward N; partial timesteps newer than the oldest kept one are kept too, and nothing is deleted with N or fewer complete timesteps (`split_keep_last`).
 
 ### foamLogParse.py
 
