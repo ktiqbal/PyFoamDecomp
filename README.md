@@ -12,9 +12,11 @@ No third-party dependencies — everything runs on the Python 3 standard library
 
 ### `foamTimes.py` — timestep management
 
-List, inspect, and delete timesteps across all `processor*` directories.
+List, inspect, and delete timesteps across all `processor*` directories, or in the case root for undecomposed cases.
 
 Timestep discovery uses the **union** across processors, so a timestep is considered present if *any* processor wrote it. This makes the tool safe to run even after a partial write (e.g. a crashed simulation).
+
+If the case has no `processor*` directories, the time directories in the case root are used instead. In a decomposed case, root time directories (e.g. from `reconstructPar`) are ignored unless you pass `--root`; root and processor timesteps are never mixed in one run.
 
 ```
 Usage: foamTimes.py [OPTIONS] [CASE_DIR]
@@ -24,8 +26,10 @@ Arguments:
 
 Options:
   --all             Act on ALL timesteps instead of just the latest
-  --time TIME, -t   Act on a specific timestep value (e.g. --time 1.5)
+  --time TIME, -t   Act on a specific timestep value, matched numerically
+                    (e.g. --time 8.0 finds 8/; error if no match)
   --keep-last N     Act on all timesteps except the N newest complete ones
+  --root            Use time directories in the case root even if processor* dirs exist
   --rm              Delete the selected timestep(s)
   --dry-run, -n     Preview what would be deleted without actually deleting
   --with-zero       Include the 0/ directory in scope
@@ -51,6 +55,10 @@ python3 foamTimes.py --rm --dry-run        # preview deletion without executing
 python3 foamTimes.py --keep-last 3         # show which timesteps would be kept/deleted
 python3 foamTimes.py --keep-last 3 -n      # preview the deletion
 python3 foamTimes.py --keep-last 3 --rm    # keep only the 3 newest complete timesteps
+
+# --- Case root ---
+python3 foamTimes.py --all /path/to/undecomposed/case   # root times used automatically
+python3 foamTimes.py --root --keep-last 2 --rm          # prune reconstructed times in a decomposed case
 ```
 
 `--keep-last N` counts only **complete** timesteps (present on every processor), so a partially written timestep from a crash never takes one of the N slots. Partial timesteps newer than the oldest kept one are also kept (and flagged `(partial)` in the listing); everything older is deleted. If there are N or fewer complete timesteps, nothing is deleted. `--all`, `--time` and `--keep-last` are mutually exclusive.
