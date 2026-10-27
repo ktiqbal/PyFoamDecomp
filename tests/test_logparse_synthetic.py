@@ -1,21 +1,19 @@
-import tempfile
 import unittest
-from pathlib import Path
 
 import ofcase
-from ofcase import FOAM_LOG_PARSE, LOG_FIELDS
-from pyfoamdecomp import logparse as foamLogParse
+from ofcase import FOAM_LOG_PARSE, LOG_FIELDS, TempDirTestCase
+from pyfoamdecomp import logparse
 
 
 def row(*values):
     return '  '.join('NaN' if v is None else '{:.10e}'.format(v) for v in values)
 
 
-class SyntheticLogTest(unittest.TestCase):
+class SyntheticLogTest(TempDirTestCase):
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name)
+        super().setUp()
+        self.root = self.tmp
         self.log = self.root / 'log.out'
         self.rng = ofcase.case_rng(self.id())
         self.n = ofcase.n_procs(self.rng)
@@ -23,14 +21,11 @@ class SyntheticLogTest(unittest.TestCase):
         self.msg = 'n_procs={}, n_steps={}, seed {!r}'.format(
             self.n, self.n_steps, '{}:{}'.format(ofcase.SEED, self.id()))
 
-    def tearDown(self):
-        self._tmp.cleanup()
-
     def write_log(self, **kwargs):
         return ofcase.rheofoam_log(self.log, self.rng, self.n, self.n_steps, **kwargs)
 
     def parse(self):
-        return foamLogParse.parse_log(str(self.log))
+        return logparse.parse_log(str(self.log))
 
     def run_cli(self, *args):
         result = ofcase.run_command(FOAM_LOG_PARSE, self.log, '--out', self.root / 'out', *args)

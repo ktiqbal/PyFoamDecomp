@@ -14,6 +14,8 @@ import os
 import random
 import subprocess
 import sys
+import tempfile
+import unittest
 from collections import namedtuple
 from pathlib import Path
 
@@ -45,6 +47,15 @@ DYNAMIC_CODE = ('outputCd/codedFunctionObjectTemplate.C', 'outputCd/codedFunctio
                 'platforms/linux64GccDPInt32Opt/lib/liboutputCd.so')
 
 Case = namedtuple('Case', 'root procs')
+
+
+class TempDirTestCase(unittest.TestCase):
+    """Gives each test a fresh, resolved temporary directory as self.tmp."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name).resolve()
 
 
 def case_rng(test_id):
@@ -165,7 +176,7 @@ def collated_case(root, n, times=WRITE_TIMES, reconstructed=WRITE_TIMES, io_rank
 
 
 def times_on_disk(loc):
-    """Time dir names in loc, numerically sorted (independent of foamTimes.is_time_dir)."""
+    """Time dir names in loc, numerically sorted (independent of case.is_time_dir)."""
     names = []
     for p in loc.iterdir():
         try:

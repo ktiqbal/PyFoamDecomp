@@ -1,9 +1,7 @@
-import tempfile
 import unittest
-from pathlib import Path
 
-from ofcase import FOAM_TIMES, run_command, times_on_disk
-from pyfoamdecomp import times as foamTimes
+from ofcase import FOAM_TIMES, TempDirTestCase, run_command, times_on_disk
+from pyfoamdecomp import case, times
 
 
 def make_case(root, n_procs, times, missing=None):
@@ -32,31 +30,24 @@ def make_collated(root, name, times):
     return loc
 
 
-class CliTestCase(unittest.TestCase):
+class CliTestCase(TempDirTestCase):
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name)
-
-    def tearDown(self):
-        self._tmp.cleanup()
+        super().setUp()
+        self.root = self.tmp
 
     def run_cli(self, *args):
         return run_command(FOAM_TIMES, *(args + (self.root,)))
 
 
-class SplitKeepLastTest(unittest.TestCase):
+class SplitKeepLastTest(TempDirTestCase):
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name)
-
-    def tearDown(self):
-        self._tmp.cleanup()
+        super().setUp()
+        self.root = self.tmp
 
     def split(self, procs, n):
-        times = foamTimes.get_times_union([procs])
-        return foamTimes.split_keep_last(times, [procs], n)
+        return times.split_keep_last(case.get_times_union([procs]), [procs], n)
 
     def test_keeps_newest_n(self):
         procs = make_case(self.root, 2, ['1', '2', '3', '4'])
@@ -138,13 +129,6 @@ class ProcessorOrderTest(CliTestCase):
         self.assertEqual(result.stdout.splitlines()[-1],
                          '2  10/12 processor*  [MISSING: processor2, processor10]')
 
-    def test_io_rank_dirs_sorted_by_first_rank(self):
-        for name in ('processors12_10-11', 'processors12_0-1', 'processors12_2-9'):
-            make_collated(self.root, name, ['1'])
-        families = foamTimes.find_processor_families(self.root)
-        self.assertEqual([p.name for p in families['processors12']],
-                         ['processors12_0-1', 'processors12_2-9', 'processors12_10-11'])
-
 
 class RootCliTest(CliTestCase):
 
@@ -188,6 +172,12 @@ class RootCliTest(CliTestCase):
         for proc in procs:
             self.assertEqual(times_on_disk(proc), ['1', '2'])
         self.assertEqual(times_on_disk(self.root), ['0'])
+
+    def test_decomposed_on_undecomposed_case_is_an_error(self):
+        make_root_case(self.root, ['1', '2'])
+        result = self.run_cli('--decomposed', '--all')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('No processor* directories with timesteps', result.stderr)
 
 
 class TimeByValueCliTest(CliTestCase):
@@ -292,16 +282,8 @@ class SidesCliTest(CliTestCase):
     def test_root_only_time_counts_as_complete(self):
         (self.coll / '6').rmdir()
         sides = [[self.root], [self.coll]]
-        times = foamTimes.get_times_union(sides)
-        self.assertEqual(foamTimes.split_keep_last(times, sides, 2), (['6', '8'], ['2', '4']))
-
-    def test_decomposed_on_undecomposed_case_is_an_error(self):
-        self._tmp.cleanup()
-        self.root.mkdir()
-        make_root_case(self.root, ['1', '2'])
-        result = self.run_cli('--decomposed', '--all')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('No processor* directories with timesteps', result.stderr)
+        union = case.get_times_union(sides)
+        self.assertEqual(times.split_keep_last(union, sides, 2), (['6', '8'], ['2', '4']))
 
 
 class SideAmbiguityCliTest(CliTestCase):

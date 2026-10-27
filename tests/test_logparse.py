@@ -1,9 +1,7 @@
-import tempfile
 import unittest
-from pathlib import Path
 
-from ofcase import FOAM_LOG_PARSE, run_command
-from pyfoamdecomp import logparse as foamLogParse
+from ofcase import FOAM_LOG_PARSE, TempDirTestCase, run_command
+from pyfoamdecomp import logparse
 
 COUPLED_LOG = """\
 Courant Number mean: 0.0001 max: 0.008
@@ -44,29 +42,32 @@ ExecutionTime = 1.92 s  ClockTime = 9 s
 """
 
 
-class CoupledResidualsTest(unittest.TestCase):
+class LogTestCase(TempDirTestCase):
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name)
+        super().setUp()
+        self.root = self.tmp
         self.log = self.root / 'log.out'
-        self.log.write_text(COUPLED_LOG)
-
-    def tearDown(self):
-        self._tmp.cleanup()
 
     def run_cli(self, *args):
         return run_command(FOAM_LOG_PARSE, self.log, '--out', self.root / 'out', *args)
 
+
+class CoupledResidualsTest(LogTestCase):
+
+    def setUp(self):
+        super().setUp()
+        self.log.write_text(COUPLED_LOG)
+
     def test_coupled_fields_discovered(self):
-        records, fields = foamLogParse.parse_log(str(self.log))
+        records, fields = logparse.parse_log(str(self.log))
         self.assertEqual(fields, ['thetaxx', 'p', 'Ux', 'Uy'])
         self.assertEqual([r['time'] for r in records], [0.02, 0.04])
         self.assertEqual(records[0]['fields']['Uy'], {'init': 1.0, 'final': 0.99, 'iters': 1})
         self.assertEqual(records[1]['fields']['thetaxx'], {'init': 0.52, 'final': 4.7e-11, 'iters': 7})
 
     def test_coupled_inner_iterations_merged(self):
-        records, _ = foamLogParse.parse_log(str(self.log))
+        records, _ = logparse.parse_log(str(self.log))
         self.assertEqual(records[1]['fields']['p'], {'init': 8.8e-06, 'final': 1e-17, 'iters': 3})
         self.assertEqual(records[1]['fields']['Ux'], {'init': 0.47, 'final': 5e-16, 'iters': 2})
 
@@ -84,6 +85,23 @@ class CoupledResidualsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('->', result.stdout)
         self.assertTrue(all(ord(c) < 128 for c in result.stdout))
+
+
+class CliErrorTest(LogTestCase):
+
+    def test_missing_logfile_is_an_error(self):
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, '')
+        self.assertIn('ERROR: file not found: {}'.format(self.log), result.stderr)
+        self.assertFalse((self.root / 'out').exists())
+
+    def test_log_without_time_steps_is_an_error(self):
+        self.log.write_text('Courant Number mean: 0 max: 0\nStarting time loop\n')
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('ERROR: No time-step records found.', result.stderr)
+        self.assertEqual(list((self.root / 'out').iterdir()), [])
 
 
 if __name__ == '__main__':

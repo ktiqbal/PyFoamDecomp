@@ -1,6 +1,5 @@
-#!/usr/bin/env python3
 """
-foamTimes.py - OpenFOAM case timestep utilities.
+foamTimes - OpenFOAM case timestep utilities.
 
 Find (and optionally delete) timesteps in the two "sides" of a case:
   root        time directories in the case root (undecomposed or reconstructed)
@@ -12,117 +11,39 @@ side that has timesteps; deleting from a case where both sides have timesteps
 requires --root, --decomposed, or both.
 
 Usage:
-    foamTimes.py [OPTIONS] [CASE_DIR]
+    foamTimes [OPTIONS] [CASE_DIR]
 
 Examples:
-    foamTimes.py                        # list latest time, current dir
-    foamTimes.py /path/to/case          # list latest time, given case dir
-    foamTimes.py --all                  # list all times (union)
-    foamTimes.py --all --verbose        # show which side/processors have each time
-    foamTimes.py --rm                   # delete latest time
-    foamTimes.py --all --rm             # delete ALL times (except 0)
-    foamTimes.py --time 1.5 --rm        # delete a specific time
-    foamTimes.py --rm --dry-run         # preview deletion without executing
-    foamTimes.py --keep-last 3          # show which times would be kept/deleted
-    foamTimes.py --keep-last 3 --rm     # keep only the 3 newest complete times
-    foamTimes.py --decomposed --keep-last 2 --rm  # after reconstructPar: prune processor dirs
-    foamTimes.py --root --keep-last 2 --rm        # prune reconstructed times in the case root
-    foamTimes.py --root --decomposed --time 8 --rm  # delete 8 from both sides
+    foamTimes                        # list latest time, current dir
+    foamTimes /path/to/case          # list latest time, given case dir
+    foamTimes --all                  # list all times (union)
+    foamTimes --all --verbose        # show which side/processors have each time
+    foamTimes --rm                   # delete latest time
+    foamTimes --all --rm             # delete ALL times (except 0)
+    foamTimes --time 1.5 --rm        # delete a specific time
+    foamTimes --rm --dry-run         # preview deletion without executing
+    foamTimes --keep-last 3          # show which times would be kept/deleted
+    foamTimes --keep-last 3 --rm     # keep only the 3 newest complete times
+    foamTimes --decomposed --keep-last 2 --rm  # after reconstructPar: prune processor dirs
+    foamTimes --root --keep-last 2 --rm        # prune reconstructed times in the case root
+    foamTimes --root --decomposed --time 8 --rm  # delete 8 from both sides
 """
 
 import argparse
-import re
 import shutil
 import sys
 from pathlib import Path
 
-PROCESSOR_DIR_RE = r'(processors?)([0-9]+)(_[0-9]+-[0-9]+)?'
+from pyfoamdecomp.case import (
+    all_locations, find_processor_families, find_time_by_value, get_times_union,
+    is_complete, is_time_dir, side_label,
+)
+from pyfoamdecomp.cli import fail
 
 
 # ---------------------------------------------------------------------------
-# Core helpers
+# Side and timestep selection
 # ---------------------------------------------------------------------------
-# A "side" is a list of directories holding time directories: [case_dir] for
-# the root, or the processor dirs of one family. Helpers take a list of sides.
-
-def is_time_dir(name):
-    """Return True if the directory name looks like an OpenFOAM timestep."""
-    # Matches: 0, 1, 0.5, 1.5, 1e-3, 1.5e+2, etc.  Excludes 'constant', 'system', etc.
-    return bool(re.fullmatch(r'[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?', name))
-
-
-def time_sort_key(name):
-    """Convert a timestep directory name to float for numeric sorting."""
-    try:
-        return float(name)
-    except ValueError:
-        return 0.0
-
-
-def processor_dir_key(path):
-    """Numeric sort key, so processor2 sorts before processor10 and processors4_2-3 after _0-1."""
-    _, n, ranks = re.fullmatch(PROCESSOR_DIR_RE, path.name).groups()
-    return int(n), int(ranks[1:].split('-')[0]) if ranks else -1
-
-
-def find_processor_families(case_dir):
-    """
-    Group processor dirs by layout: classic processorN dirs form one family,
-    collated processorsN and processorsN_a-b dirs form one family per N.
-    """
-    families = {}
-    for p in case_dir.iterdir():
-        m = re.fullmatch(PROCESSOR_DIR_RE, p.name)
-        if m and p.is_dir():
-            key = 'processor' if m.group(1) == 'processor' else 'processors' + m.group(2)
-            families.setdefault(key, []).append(p)
-    return {k: sorted(dirs, key=processor_dir_key) for k, dirs in families.items()}
-
-
-def side_label(side):
-    """'root', a single processor dir's name, or a family glob like 'processor*'."""
-    m = re.fullmatch(PROCESSOR_DIR_RE, side[0].name)
-    if m is None:
-        return 'root'
-    if len(side) == 1:
-        return side[0].name
-    return 'processor*' if m.group(1) == 'processor' else 'processors{}_*'.format(m.group(2))
-
-
-def all_locations(sides):
-    return [loc for side in sides for loc in side]
-
-
-def get_times_union(sides, include_zero=False):
-    """
-    Return sorted list of all timestep names present in ANY location
-    (i.e. the union), optionally including '0'.
-    """
-    times = set()
-    for loc in all_locations(sides):
-        for entry in loc.iterdir():
-            if entry.is_dir() and is_time_dir(entry.name):
-                if not include_zero and entry.name == '0':
-                    continue
-                times.add(entry.name)
-    return sorted(times, key=time_sort_key)
-
-
-def get_latest_time(sides, include_zero=False):
-    """Return the single latest timestep name across all sides."""
-    times = get_times_union(sides, include_zero=include_zero)
-    return times[-1] if times else None
-
-
-def find_time_by_value(value, sides):
-    """Return the timestep names whose numeric value equals value (e.g. '8.0' -> ['8'])."""
-    return [t for t in get_times_union(sides, include_zero=True) if float(t) == float(value)]
-
-
-def is_complete(t, sides):
-    """True if some side has t in every one of its locations."""
-    return any(all((loc / t).is_dir() for loc in side) for side in sides)
-
 
 def split_keep_last(times, sides, n):
     """
@@ -134,15 +55,10 @@ def split_keep_last(times, sides, n):
     complete = [t for t in times if is_complete(t, sides)]
     if len(complete) <= n:
         return list(times), []
-    cutoff = time_sort_key(complete[-n])
-    keep = [t for t in times if time_sort_key(t) >= cutoff]
-    delete = [t for t in times if time_sort_key(t) < cutoff]
+    cutoff = float(complete[-n])
+    keep = [t for t in times if float(t) >= cutoff]
+    delete = [t for t in times if float(t) < cutoff]
     return keep, delete
-
-
-def fail(message):
-    print("ERROR: {}".format(message), file=sys.stderr)
-    sys.exit(1)
 
 
 def resolve_sides(case_dir, root, decomposed, deleting, with_zero):
@@ -157,8 +73,8 @@ def resolve_sides(case_dir, root, decomposed, deleting, with_zero):
 
     def decomposed_side():
         if len(with_times) > 1:
-            fail("Several processor dir layouts contain timesteps: {}".format(
-                ', '.join(side_label(d) for _, d in sorted(with_times.items()))))
+            labels = ', '.join(side_label(d) for _, d in sorted(with_times.items()))
+            fail(f"Several processor dir layouts contain timesteps: {labels}")
         return next(iter(with_times.values()), None)
 
     if root or decomposed:
@@ -166,7 +82,7 @@ def resolve_sides(case_dir, root, decomposed, deleting, with_zero):
         if decomposed:
             dec = decomposed_side()
             if dec is None:
-                fail("No processor* directories with timesteps found in {}".format(case_dir))
+                fail(f"No processor* directories with timesteps found in {case_dir}")
             sides.append(dec)
         return sides
 
@@ -178,8 +94,8 @@ def resolve_sides(case_dir, root, decomposed, deleting, with_zero):
     if not deleting:
         return ([root_side] if root_has_times else []) + ([dec] if dec else [])
     if dec and root_has_times:
-        fail("Timesteps exist in both the case root and {}; pass --root, --decomposed, "
-             "or both".format(side_label(dec)))
+        fail(f"Timesteps exist in both the case root and {side_label(dec)}; pass --root, "
+             "--decomposed, or both")
     if root_has_times:
         fail("processor* directories contain no timesteps, but the case root does; pass --root")
     return [dec] if dec else []
@@ -199,15 +115,15 @@ def presence_status(t, sides):
         if len(side) == 1:
             cell, width = (label if n_present else ''), len(label)
         else:
-            cell = '{}/{} {}'.format(n_present, len(side), label) if n_present else ''
-            width = len('{0}/{0} {1}'.format(len(side), label))
+            cell = f'{n_present}/{len(side)} {label}' if n_present else ''
+            width = len(f'{len(side)}/{len(side)} {label}')
             if n_present:
                 missing += absent
         cells.append(cell.ljust(width))
     status = '  ' + '  '.join(cells)
     if missing:
         suffix = '...' if len(missing) > 5 else ''
-        status += "  [MISSING: {}{}]".format(', '.join(missing[:5]), suffix)
+        status += f"  [MISSING: {', '.join(missing[:5])}{suffix}]"
     return status
 
 
@@ -215,15 +131,15 @@ def list_times(times, sides, verbose):
     width = max(len(t) for t in times)
     for t in times:
         if verbose:
-            print("{}{}".format(t.ljust(width), presence_status(t, sides)).rstrip())
+            print(f"{t.ljust(width)}{presence_status(t, sides)}".rstrip())
         else:
             print(t)
 
 
 def list_keep_last(keep, delete, sides, verbose):
     width = max(len(t) for t in keep + delete)
-    for t in sorted(keep + delete, key=time_sort_key):
-        line = "{}  {:<6}".format(t.ljust(width), 'keep' if t in keep else 'delete')
+    for t in sorted(keep + delete, key=float):
+        line = f"{t.ljust(width)}  {'keep' if t in keep else 'delete':<6}"
         if verbose:
             line += presence_status(t, sides)
         elif t in keep and not is_complete(t, sides):
@@ -241,15 +157,14 @@ def delete_times(times, sides, dry_run, verbose):
             target = loc / t
             if target.is_dir():
                 if dry_run:
-                    print("[dry-run] Would delete: {}".format(target))
+                    print(f"[dry-run] Would delete: {target}")
                 else:
-                    shutil.rmtree(str(target))
+                    shutil.rmtree(target)
                     if verbose:
-                        print("Deleted: {}".format(target))
-            # silently skip locations that don't have this timestep (partial write)
+                        print(f"Deleted: {target}")
 
     if not dry_run:
-        print("Deleted time(s): {}".format(', '.join(times)))
+        print(f"Deleted time(s): {', '.join(times)}")
 
 
 # ---------------------------------------------------------------------------
@@ -262,7 +177,7 @@ def positive_int(value):
     except ValueError:
         n = 0
     if n < 1:
-        raise argparse.ArgumentTypeError("must be a positive integer, got '{}'".format(value))
+        raise argparse.ArgumentTypeError(f"must be a positive integer, got '{value}'")
     return n
 
 
@@ -337,57 +252,45 @@ def build_parser():
     return parser
 
 
-def main():
-    parser = build_parser()
-    args = parser.parse_args()
+def main(argv=None):
+    args = build_parser().parse_args(argv)
 
     case_dir = Path(args.case_dir).resolve()
     if not case_dir.is_dir():
-        fail("Case directory not found: {}".format(case_dir))
+        fail(f"Case directory not found: {case_dir}")
 
     deleting = args.rm or args.dry_run
     sides = resolve_sides(case_dir, args.root, args.decomposed, deleting, args.with_zero)
     if args.verbose and sides:
         names = ', '.join(
             'case root' if s == [case_dir] else
-            side_label(s) + ('' if len(s) == 1 else ' ({} dirs)'.format(len(s))) for s in sides)
-        print("Using time directories in: {}".format(names), file=sys.stderr)
+            side_label(s) + ('' if len(s) == 1 else f' ({len(s)} dirs)') for s in sides)
+        print(f"Using time directories in: {names}", file=sys.stderr)
     list_verbose = args.verbose and len(all_locations(sides)) > 1
 
-    if args.keep_last:
-        times = get_times_union(sides, include_zero=args.with_zero)
-        if not times:
-            print("No timesteps found.")
-            sys.exit(0)
-        keep, delete = split_keep_last(times, sides, args.keep_last)
-        if deleting:
-            delete_times(delete, sides, dry_run=args.dry_run, verbose=args.verbose)
-            label = "[dry-run] Would keep" if args.dry_run else "Kept time(s)"
-            print("{}: {}".format(label, ', '.join(keep)))
-        else:
-            list_keep_last(keep, delete, sides, verbose=list_verbose)
-        return
-
-    # --- Determine which times to act on ---
     if args.time:
         if not is_time_dir(args.time):
-            fail("'{}' doesn't look like a valid timestep name.".format(args.time))
+            fail(f"'{args.time}' doesn't look like a valid timestep name.")
         times = find_time_by_value(args.time, sides)
         if not times:
-            fail("No timestep matching '{}'".format(args.time))
-    elif args.all:
+            fail(f"No timestep matching '{args.time}'")
+    else:
         times = get_times_union(sides, include_zero=args.with_zero)
         if not times:
             print("No timesteps found.")
-            sys.exit(0)
-    else:
-        latest = get_latest_time(sides, include_zero=args.with_zero)
-        if latest is None:
-            print("No timesteps found.")
-            sys.exit(0)
-        times = [latest]
+            return
+        if args.keep_last:
+            keep, delete = split_keep_last(times, sides, args.keep_last)
+            if deleting:
+                delete_times(delete, sides, dry_run=args.dry_run, verbose=args.verbose)
+                label = "[dry-run] Would keep" if args.dry_run else "Kept time(s)"
+                print(f"{label}: {', '.join(keep)}")
+            else:
+                list_keep_last(keep, delete, sides, verbose=list_verbose)
+            return
+        if not args.all:
+            times = times[-1:]
 
-    # --- Act ---
     if deleting:
         delete_times(times, sides, dry_run=args.dry_run, verbose=args.verbose)
     else:

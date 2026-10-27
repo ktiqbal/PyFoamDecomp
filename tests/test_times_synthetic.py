@@ -1,22 +1,17 @@
-import tempfile
 import unittest
-from pathlib import Path
 
 import ofcase
-from ofcase import FOAM_TIMES, WRITE_TIMES, snapshot, times_on_disk, without
+from ofcase import FOAM_TIMES, WRITE_TIMES, TempDirTestCase, snapshot, times_on_disk, without
 
 
-class SyntheticCaseTest(unittest.TestCase):
+class SyntheticCaseTest(TempDirTestCase):
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name).resolve() / 'case'
+        super().setUp()
+        self.root = self.tmp / 'case'
         self.rng = ofcase.case_rng(self.id())
         self.n = ofcase.n_procs(self.rng)
         self.msg = 'n_procs={}, seed {!r}'.format(self.n, '{}:{}'.format(ofcase.SEED, self.id()))
-
-    def tearDown(self):
-        self._tmp.cleanup()
 
     def run_cli(self, *args):
         return ofcase.run_command(FOAM_TIMES, *(args + (self.root,)))
@@ -220,15 +215,12 @@ class CollatedTest(SyntheticCaseTest):
             self.assertTimes(loc, ['0', '12'] + ([] if i in lacking else ['14']))
 
 
-class GeneratorTest(unittest.TestCase):
+class GeneratorTest(TempDirTestCase):
     """Guards the fixtures against drifting from the real OpenFOAM layouts."""
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name) / 'case'
-
-    def tearDown(self):
-        self._tmp.cleanup()
+        super().setUp()
+        self.root = self.tmp / 'case'
 
     def entries(self, path):
         return sorted(p.name for p in path.iterdir())
