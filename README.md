@@ -8,9 +8,23 @@ No third-party dependencies — everything runs on the Python 3 standard library
 
 ---
 
+## Installation
+
+Install into a virtual environment; this puts the `foamTimes` and `foamLogParse` commands on its `PATH`:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e .     # editable: picks up changes to src/ without reinstalling
+.venv/bin/pip install .        # or a regular install
+```
+
+On a machine without network access, install `setuptools>=64` into the venv first and add `--no-build-isolation`.
+
+---
+
 ## Tools
 
-### `foamTimes.py` — timestep management
+### `foamTimes` — timestep management
 
 List, inspect, and delete timesteps in the two "sides" of a case:
 
@@ -22,7 +36,7 @@ Decomposed timestep discovery uses the **union** across processors, so a timeste
 Listing shows every side that has timesteps. Deleting (`--rm` / `--dry-run`) from a case where **both** sides have timesteps (e.g. after `reconstructPar`) is an error unless you pick a side with `--root`, `--decomposed`, or both flags to delete from both. If the processor dirs exist but hold no timesteps, deletion never falls back to the case root on its own: pass `--root`. A case root holding only `0/` does not count as having timesteps (unless `--with-zero`).
 
 ```
-Usage: foamTimes.py [OPTIONS] [CASE_DIR]
+Usage: foamTimes [OPTIONS] [CASE_DIR]
 
 Arguments:
   CASE_DIR    Path to the OpenFOAM case directory (default: current directory)
@@ -45,28 +59,28 @@ Options:
 
 ```bash
 # --- Listing ---
-python3 foamTimes.py                       # latest timestep, current dir
-python3 foamTimes.py /path/to/case         # latest timestep, given dir
-python3 foamTimes.py --all                 # all timesteps (union across processors)
-python3 foamTimes.py --all --verbose       # all timesteps + per-processor presence
+foamTimes                       # latest timestep, current dir
+foamTimes /path/to/case         # latest timestep, given dir
+foamTimes --all                 # all timesteps (union across processors)
+foamTimes --all --verbose       # all timesteps + per-processor presence
 
 # --- Deletion ---
-python3 foamTimes.py --rm                  # delete latest timestep
-python3 foamTimes.py --all --rm            # delete ALL timesteps (except 0/)
-python3 foamTimes.py --time 1.5 --rm       # delete a specific timestep
-python3 foamTimes.py --rm --dry-run        # preview deletion without executing
+foamTimes --rm                  # delete latest timestep
+foamTimes --all --rm            # delete ALL timesteps (except 0/)
+foamTimes --time 1.5 --rm       # delete a specific timestep
+foamTimes --rm --dry-run        # preview deletion without executing
 
 # --- Pruning ---
-python3 foamTimes.py --keep-last 3         # show which timesteps would be kept/deleted
-python3 foamTimes.py --keep-last 3 -n      # preview the deletion
-python3 foamTimes.py --keep-last 3 --rm    # keep only the 3 newest complete timesteps
+foamTimes --keep-last 3         # show which timesteps would be kept/deleted
+foamTimes --keep-last 3 -n      # preview the deletion
+foamTimes --keep-last 3 --rm    # keep only the 3 newest complete timesteps
 
 # --- Case root / reconstructed cases ---
-python3 foamTimes.py --all /path/to/undecomposed/case   # root times used automatically
-python3 foamTimes.py --all -v                           # which times are reconstructed / decomposed
-python3 foamTimes.py --decomposed --keep-last 2 --rm    # after reconstructPar: prune processor dirs
-python3 foamTimes.py --root --keep-last 2 --rm          # prune reconstructed times only
-python3 foamTimes.py --root --decomposed --time 8 --rm  # delete 8 from both sides
+foamTimes --all /path/to/undecomposed/case   # root times used automatically
+foamTimes --all -v                           # which times are reconstructed / decomposed
+foamTimes --decomposed --keep-last 2 --rm    # after reconstructPar: prune processor dirs
+foamTimes --root --keep-last 2 --rm          # prune reconstructed times only
+foamTimes --root --decomposed --time 8 --rm  # delete 8 from both sides
 ```
 
 With `-v`, each time gets one column per side (blank where it is absent), e.g. after `reconstructPar` with only some times reconstructed:
@@ -90,13 +104,13 @@ Processor dirs without any time directories are ignored (e.g. the empty `process
 
 ---
 
-### `foamLogParse.py` — log file parser
+### `foamLogParse` — log file parser
 
 Parse an OpenFOAM solver log and extract per-timestep quantities into
 whitespace-separated `.txt` files for plotting with numpy, pandas, gnuplot, etc.
 
 ```
-Usage: foamLogParse.py [OPTIONS] LOGFILE
+Usage: foamLogParse [OPTIONS] LOGFILE
 
 Arguments:
   LOGFILE     Path to the OpenFOAM log file
@@ -134,16 +148,16 @@ res = np.loadtxt('foamLog_log/residuals_p.txt', comments='#')
 
 ```bash
 # Parse a log, write output next to it in foamLog_log/
-python3 foamLogParse.py log.out
+foamLogParse log.out
 
 # Write to a specific directory with a run prefix
-python3 foamLogParse.py log.out --out results/ --prefix run1_
+foamLogParse log.out --out results/ --prefix run1_
 
 # Parse and print a summary table
-python3 foamLogParse.py log.out --verbose
+foamLogParse log.out --verbose
 
 # Only write Courant and residuals, skip the rest
-python3 foamLogParse.py log.out --no-continuity --no-timing
+foamLogParse log.out --no-continuity --no-timing
 ```
 
 #### Notes
@@ -157,5 +171,5 @@ python3 foamLogParse.py log.out --no-continuity --no-timing
 
 ## Requirements
 
-- Python ≥ 3.6
-- Standard library only (`os`, `re`, `argparse`, `pathlib`, `shutil`)
+- Python >= 3.9
+- Standard library only at runtime (`setuptools` is needed only to install)
