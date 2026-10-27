@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyfoamdecomp"
+version = "0.1.0"
+description = "Command-line tools for decomposed OpenFOAM cases and their solver logs"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Tassawar Iqbal" }]
+dependencies = []
+
+[project.scripts]
+foamTimes = "pyfoamdecomp.times:main"
+foamLogParse = "pyfoamdecomp.logparse:main"

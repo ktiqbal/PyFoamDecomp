@@ -1,14 +1,10 @@
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 import ofcase
-from ofcase import FOAM_LOG_PARSE, LOG_FIELDS, REPO
-
-sys.path.insert(0, str(REPO))
-
-import foamLogParse  # noqa: E402
+from ofcase import FOAM_LOG_PARSE, LOG_FIELDS
+from pyfoamdecomp import logparse as foamLogParse
 
 
 def row(*values):
@@ -37,7 +33,7 @@ class SyntheticLogTest(unittest.TestCase):
         return foamLogParse.parse_log(str(self.log))
 
     def run_cli(self, *args):
-        result = ofcase.run_script(FOAM_LOG_PARSE, self.log, '--out', self.root / 'out', *args)
+        result = ofcase.run_command(FOAM_LOG_PARSE, self.log, '--out', self.root / 'out', *args)
         self.assertEqual(result.returncode, 0, '{}\n{}'.format(result.stderr, self.msg))
         return result
 

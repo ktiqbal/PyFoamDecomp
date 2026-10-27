@@ -1,13 +1,9 @@
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from ofcase import FOAM_TIMES, REPO, run_script, times_on_disk
-
-sys.path.insert(0, str(REPO))
-
-import foamTimes  # noqa: E402
+from ofcase import FOAM_TIMES, run_command, times_on_disk
+from pyfoamdecomp import times as foamTimes
 
 
 def make_case(root, n_procs, times, missing=None):
@@ -46,7 +42,7 @@ class CliTestCase(unittest.TestCase):
         self._tmp.cleanup()
 
     def run_cli(self, *args):
-        return run_script(FOAM_TIMES, *(args + (self.root,)))
+        return run_command(FOAM_TIMES, *(args + (self.root,)))
 
 
 class SplitKeepLastTest(unittest.TestCase):

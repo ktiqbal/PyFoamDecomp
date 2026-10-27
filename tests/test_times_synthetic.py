@@ -19,7 +19,7 @@ class SyntheticCaseTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def run_cli(self, *args):
-        return ofcase.run_script(FOAM_TIMES, *(args + (self.root,)))
+        return ofcase.run_command(FOAM_TIMES, *(args + (self.root,)))
 
     def assertOk(self, result):
         self.assertEqual(result.returncode, 0, '{}\n{}'.format(result.stderr, self.msg))

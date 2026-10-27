@@ -18,8 +18,12 @@ from collections import namedtuple
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-FOAM_TIMES = REPO / 'foamTimes.py'
-FOAM_LOG_PARSE = REPO / 'foamLogParse.py'
+SRC = REPO / 'src'
+# Test modules import ofcase first, so pyfoamdecomp resolves to the working tree.
+sys.path.insert(0, str(SRC))
+
+FOAM_TIMES = 'pyfoamdecomp.times'
+FOAM_LOG_PARSE = 'pyfoamdecomp.logparse'
 
 SEED = 42
 MIN_PROCS, MAX_PROCS = 8, 1024
@@ -193,10 +197,13 @@ def without(paths, removed):
     return {p for p in paths if not gone(p)}
 
 
-def run_script(script, *args):
+def run_command(module, *args):
+    """Run a pyfoamdecomp command module from the working tree in a subprocess."""
+    env = dict(os.environ)
+    env['PYTHONPATH'] = os.pathsep.join(filter(None, [str(SRC), env.get('PYTHONPATH')]))
     return subprocess.run(
-        [sys.executable, str(script)] + [str(a) for a in args],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+        [sys.executable, '-m', module] + [str(a) for a in args],
+        capture_output=True, text=True, env=env,
     )
 
 
